@@ -634,7 +634,7 @@ function renderProfile(profile) {
 
   dims.forEach(d => {
     const val = profile[d.key];
-    const pct = ((val + 6) / 12) * 100;
+    const pct = ((6 - val) / 12) * 100;
 
     const row = document.createElement("div");
     row.className = "profile-row";
