@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#FDF6EC">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>What Grape Variety Are You?</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Landing -->
+  <section id="landing" class="screen active">
+    <div class="landing-bg"></div>
+    <div class="landing-content">
+      <img src="images/cover.png" alt="What Kind of Grape Are You?" class="landing-cover">
+      <h1 class="landing-title">What Kind of <em>Grape</em> Are You?</h1>
+      <p class="landing-sub">
+        15 questions. 5 personality dimensions. 50 grape varieties.<br>
+        Discover your <strong>red match</strong> and your <strong>white match</strong>.
+      </p>
+      <button id="start-btn" class="btn-primary">Begin the Test</button>
+      <p class="landing-note">Takes about 3 minutes &middot; No sign-up required</p>
+    </div>
+  </section>
+
+  <!-- Quiz -->
+  <section id="quiz" class="screen">
+    <div class="quiz-container">
+      <div class="quiz-header">
+        <div class="progress-wrap">
+          <div class="progress-bar" id="progress-bar"></div>
+        </div>
+        <span class="progress-text" id="progress-text">1 / 15</span>
+      </div>
+
+      <div class="question-area" id="question-area">
+        <h2 class="question-number" id="question-number">Question 1</h2>
+        <p class="question-text" id="question-text"></p>
+        <div class="options" id="options"></div>
+      </div>
+
+      <div class="quiz-nav">
+        <button id="prev-btn" class="btn-secondary" disabled>Back</button>
+        <button id="next-btn" class="btn-primary" disabled>Next</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Calculating -->
+  <section id="calculating" class="screen">
+    <div class="calc-content">
+      <div class="wine-pour">
+        <div class="wine-glass">
+          <div class="glass-bowl">
+            <div class="wine-fill" id="wine-fill"></div>
+          </div>
+          <div class="glass-stem"></div>
+          <div class="glass-base"></div>
+        </div>
+      </div>
+      <p class="calc-text">Matching your personality to 50 grape varieties&hellip;</p>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section id="results" class="screen">
+    <div class="results-container">
+      <h2 class="results-title">Your Grape Pairing</h2>
+
+      <div class="result-cards">
+        <div class="result-card red-card">
+          <div class="grape-image-wrap" id="red-image-wrap"></div>
+          <div class="card-body">
+            <div class="card-badge">Red Match</div>
+            <h3 class="grape-name" id="red-name"></h3>
+            <div class="grape-meta">
+              <span class="signature-tag" id="red-sig"></span>
+              <span class="tannin-tag" id="red-tannin"></span>
+            </div>
+            <p class="grape-blurb" id="red-blurb"></p>
+            <p class="grape-expressions" id="red-expressions"></p>
+            <a class="grape-wiki-link" id="red-wiki" href="#" target="_blank" rel="noopener">Learn more on Wikipedia &rarr;</a>
+          </div>
+        </div>
+
+        <div class="result-card white-card">
+          <div class="grape-image-wrap" id="white-image-wrap"></div>
+          <div class="card-body">
+            <div class="card-badge">White Match</div>
+            <h3 class="grape-name" id="white-name"></h3>
+            <div class="grape-meta">
+              <span class="signature-tag" id="white-sig"></span>
+              <span class="acidity-tag" id="white-acidity"></span>
+            </div>
+            <p class="grape-blurb" id="white-blurb"></p>
+            <p class="grape-expressions" id="white-expressions"></p>
+            <a class="grape-wiki-link" id="white-wiki" href="#" target="_blank" rel="noopener">Learn more on Wikipedia &rarr;</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="pairing-section">
+        <h3>Why This Pairing Works Together</h3>
+        <p id="pairing-text"></p>
+        <p class="pairing-note" id="pairing-note"></p>
+      </div>
+
+      <div class="profile-section">
+        <h3>Your Personality Profile</h3>
+        <div class="profile-bars" id="profile-bars"></div>
+      </div>
+
+      <div class="results-actions">
+        <button id="retake-btn" class="btn-secondary">Retake Quiz</button>
+        <button id="share-btn" class="btn-primary">Copy Result to Share</button>
+      </div>
+      <p class="share-confirm" id="share-confirm"></p>
+    </div>
+  </section>
+
+  <script src="script.js"></script>
+</body>
+</html>
