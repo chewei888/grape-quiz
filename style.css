@@ -98,8 +98,9 @@ body {
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 2rem;
+  padding: 1.5rem 2rem;
   overflow: hidden;
+  height: 100svh;
 }
 
 .landing-bg {
@@ -116,35 +117,43 @@ body {
   position: relative;
   z-index: 1;
   max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-height: 100%;
 }
 
 .landing-cover {
   width: 100%;
-  max-width: 420px;
+  max-width: 480px;
   height: auto;
-  border-radius: var(--radius-lg);
-  margin-bottom: 1.5rem;
-  box-shadow: var(--shadow);
+  max-height: 50vh;
+  object-fit: contain;
+  border-radius: 0;
+  margin-bottom: .75rem;
+  flex-shrink: 1;
+  min-height: 0;
 }
 
 .landing-title {
   font-family: 'Playfair Display', serif;
-  font-size: clamp(2rem, 5.5vw, 3rem);
+  font-size: clamp(1.8rem, 5vw, 2.8rem);
   font-weight: 700;
   color: var(--wine-deep);
-  margin-bottom: 1rem;
+  margin-bottom: .6rem;
   line-height: 1.2;
 }
 .landing-title em {
   font-style: italic;
+  font-weight: 700;
   color: var(--wine);
 }
 
 .landing-sub {
-  font-size: 1.1rem;
+  font-size: 1rem;
   color: var(--text-mid);
-  margin-bottom: 2.5rem;
-  line-height: 1.7;
+  margin-bottom: 1.25rem;
+  line-height: 1.5;
 }
 .landing-sub strong { color: var(--wine); font-weight: 600; }
 
@@ -911,11 +920,11 @@ body {
 @media (max-width: 640px) {
   html { font-size: 15px; }
 
-  #landing { padding: 1.5rem; min-height: 100svh; }
+  #landing { padding: 1.25rem 1.5rem; height: 100svh; }
   .landing-content { max-width: 100%; }
-  .landing-cover { max-width: 320px; }
-  .landing-title { margin-bottom: .75rem; }
-  .landing-sub { font-size: 1rem; }
+  .landing-cover { max-width: 100%; max-height: 45vh; }
+  .landing-title { font-size: clamp(1.6rem, 5vw, 2.2rem); margin-bottom: .5rem; }
+  .landing-sub { font-size: .92rem; margin-bottom: 1rem; }
   .landing-sub br { display: none; }
 
   #quiz { padding: 1.5rem 1rem; min-height: 100svh; }
@@ -968,10 +977,10 @@ body {
 @media (max-width: 400px) {
   html { font-size: 14px; }
 
-  #landing { padding: 1.25rem; }
-  .landing-cover { max-width: 260px; margin-bottom: .75rem; }
-  .landing-title { font-size: 1.6rem; margin-bottom: .5rem; }
-  .landing-sub { margin-bottom: 2rem; }
+  #landing { padding: 1rem 1.25rem; }
+  .landing-cover { max-height: 40vh; }
+  .landing-title { font-size: 1.4rem; margin-bottom: .4rem; }
+  .landing-sub { margin-bottom: .75rem; font-size: .85rem; }
 
   #quiz { padding: 1.25rem .875rem; }
   .option-btn { padding: .75rem .875rem; gap: .65rem; }
@@ -1047,10 +1056,10 @@ body {
    ═════════════════════════════════════════ */
 @media (max-height: 500px) and (orientation: landscape) {
   .screen { min-height: auto; }
-  #landing { min-height: 100svh; padding: 1rem 2rem; }
-  .landing-cover { max-width: 200px; margin-bottom: .5rem; }
-  .landing-title { font-size: 1.4rem; margin-bottom: .4rem; }
-  .landing-sub { margin-bottom: 1rem; font-size: .85rem; }
+  #landing { height: 100svh; padding: .75rem 2rem; }
+  .landing-cover { max-height: 35vh; }
+  .landing-title { font-size: 1.2rem; margin-bottom: .3rem; }
+  .landing-sub { margin-bottom: .5rem; font-size: .8rem; }
 
   #quiz { padding: 1rem 1.5rem; }
   .quiz-header { margin-bottom: 1rem; }
