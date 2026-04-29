@@ -481,10 +481,216 @@ const CHEMISTRY_BANK = {
 };
 
 /* ═══════════════════════════════════════════
+   CONFIG
+   ═══════════════════════════════════════════ */
+const CONFIG = {
+  // Google Apps Script Web App that appends rows to the results Sheet.
+  // The shared token is not a secret-grade credential; it just blocks casual
+  // drive-by writes. Anyone reading the source can find it.
+  APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbzOB8H5_0VdV8CjgVLX7cGklMBRuDCwU_XwelLoUNG33NGp6Hh_46tQ-7mOLSGC5suA/exec",
+  SHARED_TOKEN: "gq_4tT9pX8nW2qRkLm6vYz3JhCdFsGbQ7eu",
+  SCHEMA_VERSION: "2026-04-29",
+  QUESTION_SET_VERSION: "v1",
+  GA4_ID: "G-LE8L1R6DTB"
+};
+
+/* ═══════════════════════════════════════════
    STATE
    ═══════════════════════════════════════════ */
 let currentQ = 0;
 const answers = new Array(15).fill(null);
+
+// Session + analytics state
+let sessionId        = null;
+let createdAt        = null;
+let completedAt      = null;
+let answerChanges    = 0;
+let languageChanges  = 0;
+let currentLang      = "en";   // wired to language toggle in stage 2
+let retakeCount      = 0;
+let imageDownloaded  = false;
+let shareClicks      = [];     // [{platform, ts}]
+let lastOrbit        = null;   // array of grape names
+let lastSentSnapshot = "";     // dedupe sender
+
+/* ═══════════════════════════════════════════
+   ANALYTICS + STORAGE CLIENT
+   ═══════════════════════════════════════════ */
+
+function newSessionId() {
+  if (window.crypto && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10);
+}
+
+function getDeviceContext() {
+  const ua = navigator.userAgent || "";
+  const isTablet = /iPad|Tablet|tablet/i.test(ua) ||
+                   (/Android/.test(ua) && !/Mobile/.test(ua));
+  const isMobile = /Mobi|iPhone|Android/i.test(ua) && !isTablet;
+  const deviceType = isTablet ? "tablet" : (isMobile ? "mobile" : "desktop");
+
+  const w = window.innerWidth || 0;
+  let screenBucket = "xs";
+  if (w >= 1280) screenBucket = "xl";
+  else if (w >= 1024) screenBucket = "lg";
+  else if (w >= 768)  screenBucket = "md";
+  else if (w >= 480)  screenBucket = "sm";
+
+  let browser = "other";
+  if (/Edg\//.test(ua))           browser = "edge";
+  else if (/OPR\/|Opera/.test(ua)) browser = "opera";
+  else if (/Chrome\//.test(ua) && !/Edg\//.test(ua)) browser = "chrome";
+  else if (/Firefox\//.test(ua))  browser = "firefox";
+  else if (/Safari\//.test(ua))   browser = "safari";
+
+  let os = "other";
+  if (/Windows/.test(ua))                          os = "windows";
+  else if (/Mac OS X|Macintosh/.test(ua))          os = "mac";
+  else if (/Android/.test(ua))                     os = "android";
+  else if (/iPhone|iPad|iPod|iOS/.test(ua))        os = "ios";
+  else if (/Linux/.test(ua))                       os = "linux";
+
+  let referrerHost = "";
+  try { if (document.referrer) referrerHost = new URL(document.referrer).hostname; }
+  catch (_) {}
+
+  let timezone = "";
+  try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; }
+  catch (_) {}
+
+  const params = new URLSearchParams(location.search);
+  return {
+    device_type:    deviceType,
+    screen_bucket:  screenBucket,
+    browser_family: browser,
+    os_family:      os,
+    timezone,
+    locale:         navigator.language || "",
+    referrer_host:  referrerHost,
+    utm_source:     params.get("utm_source")   || "",
+    utm_medium:     params.get("utm_medium")   || "",
+    utm_campaign:   params.get("utm_campaign") || ""
+  };
+}
+
+function lastAnsweredIndex() {
+  for (let i = answers.length - 1; i >= 0; i--) {
+    if (answers[i] !== null) return i;
+  }
+  return -1;
+}
+
+function buildPayload(completed) {
+  const lastIdx = lastAnsweredIndex();
+  const duration = (completedAt && createdAt)
+    ? (new Date(completedAt) - new Date(createdAt))
+    : "";
+
+  const profileObj = (completed && lastProfile) ? lastProfile : {};
+
+  const payload = {
+    token:                CONFIG.SHARED_TOKEN,
+    session_id:           sessionId,
+    created_at:           createdAt   || "",
+    completed_at:         completedAt || "",
+    duration_ms:          duration,
+    completed:            !!completed,
+    last_question_index:  lastIdx,
+    retake_count:         retakeCount,
+    schema_version:       CONFIG.SCHEMA_VERSION,
+    answers_json:         answers.slice(),
+    answer_changes:       answerChanges,
+    question_set_version: CONFIG.QUESTION_SET_VERSION,
+    language:             currentLang,
+    language_changes:     languageChanges,
+    red_match:            lastRed     ? lastRed.name     : "",
+    white_match:          lastWhite   ? lastWhite.name   : "",
+    fall_for:             lastFallFor ? lastFallFor.name : "",
+    orbit_json:           lastOrbit   || [],
+    profile_json:         profileObj,
+    share_clicks_json:    shareClicks,
+    image_downloaded:     imageDownloaded
+  };
+  Object.assign(payload, getDeviceContext());
+  return payload;
+}
+
+function sendPayload(payload, useBeacon) {
+  if (!CONFIG.APPS_SCRIPT_URL) return;
+  let body;
+  try { body = JSON.stringify(payload); } catch (_) { return; }
+
+  // Apps Script accepts text/plain bodies and parses contents as JSON.
+  // text/plain also avoids CORS preflight on no-cors fetch.
+  if (useBeacon && "sendBeacon" in navigator) {
+    try {
+      const blob = new Blob([body], { type: "text/plain;charset=UTF-8" });
+      navigator.sendBeacon(CONFIG.APPS_SCRIPT_URL, blob);
+      return;
+    } catch (_) { /* fall through to fetch */ }
+  }
+
+  try {
+    fetch(CONFIG.APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body,
+      mode: "no-cors",
+      keepalive: true
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+function snapshotKey(p) {
+  return [
+    p.completed ? 1 : 0,
+    p.last_question_index,
+    p.answer_changes,
+    (p.share_clicks_json || []).length,
+    p.image_downloaded ? 1 : 0,
+    p.language,
+    p.language_changes
+  ].join("|");
+}
+
+function sendIfChanged(useBeacon) {
+  if (!sessionId || !createdAt) return; // user never started
+  const payload = buildPayload(!!completedAt);
+  const snap = snapshotKey(payload);
+  if (snap === lastSentSnapshot) return;
+  lastSentSnapshot = snap;
+  sendPayload(payload, !!useBeacon);
+}
+
+function trackEvent(name, params) {
+  if (typeof window.gtag === "function") {
+    window.gtag("event", name, params || {});
+  }
+}
+
+function resetSession() {
+  currentQ          = 0;
+  answers.fill(null);
+  answerChanges     = 0;
+  createdAt         = null;
+  completedAt       = null;
+  imageDownloaded   = false;
+  shareClicks       = [];
+  lastProfile       = null;
+  lastRed           = null;
+  lastWhite         = null;
+  lastFallFor       = null;
+  lastOrbit         = null;
+  lastSentSnapshot  = "";
+  sessionId         = newSessionId();
+}
+
+window.addEventListener("pagehide", () => sendIfChanged(true));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") sendIfChanged(true);
+});
 
 /* ═══════════════════════════════════════════
    DOM
@@ -532,6 +738,9 @@ function renderQuestion() {
 }
 
 function selectOption(idx) {
+  if (answers[currentQ] !== null && answers[currentQ] !== idx) {
+    answerChanges++;
+  }
   answers[currentQ] = idx;
   document.querySelectorAll(".option-btn").forEach((b, i) => {
     b.classList.toggle("selected", i === idx);
@@ -550,6 +759,13 @@ function updateNextBtn() {
 }
 
 $("#start-btn").addEventListener("click", () => {
+  if (!sessionId) sessionId = newSessionId();
+  createdAt   = new Date().toISOString();
+  completedAt = null;
+  trackEvent("quiz_started", {
+    session_id: sessionId,
+    language:   currentLang
+  });
   showScreen(quiz);
   renderQuestion();
 });
@@ -560,6 +776,12 @@ $("#prev-btn").addEventListener("click", () => {
 
 $("#next-btn").addEventListener("click", () => {
   if (answers[currentQ] === null) return;
+  trackEvent("question_answered", {
+    question_index: currentQ,
+    answer_index:   answers[currentQ],
+    dimension:      QUESTIONS[currentQ].dim,
+    language:       currentLang
+  });
   if (currentQ < 14) {
     currentQ++;
     renderQuestion();
@@ -850,10 +1072,21 @@ function computeAndShowResults() {
   const excludeNames = [red.name, white.name];
   if (fallFor) excludeNames.push(fallFor.name);
   const orbitGrapes = findOrbit(profile, excludeNames, 4);
+  lastOrbit = orbitGrapes.map(g => g.name);
   renderOrbit(orbitGrapes);
 
   setupShareLinks(red, white, fallFor);
   showScreen(results);
+
+  completedAt = new Date().toISOString();
+  trackEvent("quiz_completed", {
+    red_match:  red.name,
+    white_match: white.name,
+    fall_for:   fallFor ? fallFor.name : "",
+    duration_ms: createdAt ? (new Date(completedAt) - new Date(createdAt)) : 0,
+    language:   currentLang
+  });
+  sendIfChanged(false);
 }
 
 function resetImageWrap(selector) {
@@ -1073,14 +1306,31 @@ async function handleShare(platformUrl, toastMsg) {
   }
 }
 
+function recordShare(platform) {
+  shareClicks.push({ platform, ts: Date.now() });
+  trackEvent("share_clicked", {
+    platform,
+    red_match:   lastRed   ? lastRed.name   : "",
+    white_match: lastWhite ? lastWhite.name : "",
+    language:    currentLang
+  });
+  sendIfChanged(false);
+}
+
 $("#retake-btn").addEventListener("click", () => {
-  currentQ = 0;
-  answers.fill(null);
+  sendIfChanged(false); // flush any pending state for the previous run
+  retakeCount++;
+  resetSession();
+  trackEvent("retake_clicked", {
+    retake_count: retakeCount,
+    language:     currentLang
+  });
   $("#share-confirm").textContent = "";
   showScreen(landing);
 });
 
 $("#share-copy-btn").addEventListener("click", () => {
+  recordShare("copy");
   const text = getShareText(
     { name: $("#red-name").textContent },
     { name: $("#white-name").textContent },
@@ -1093,21 +1343,26 @@ $("#share-copy-btn").addEventListener("click", () => {
   });
 });
 
-$("#share-instagram-btn").addEventListener("click", () =>
-  handleShare(null, "Image saved! Open Instagram and share from your gallery.")
-);
-$("#share-x-btn").addEventListener("click", () =>
-  handleShare(_platformUrls.x, "Image saved \u2014 attach it to your post on X!")
-);
-$("#share-facebook-btn").addEventListener("click", () =>
-  handleShare(_platformUrls.facebook, "Image saved \u2014 post it on Facebook!")
-);
-$("#share-whatsapp-btn").addEventListener("click", () =>
-  handleShare(_platformUrls.whatsapp, "Image saved \u2014 attach it in the chat!")
-);
-$("#share-line-btn").addEventListener("click", () =>
-  handleShare(_platformUrls.line, "Image saved \u2014 attach it in the chat!")
-);
+$("#share-instagram-btn").addEventListener("click", () => {
+  recordShare("instagram");
+  handleShare(null, "Image saved! Open Instagram and share from your gallery.");
+});
+$("#share-x-btn").addEventListener("click", () => {
+  recordShare("x");
+  handleShare(_platformUrls.x, "Image saved \u2014 attach it to your post on X!");
+});
+$("#share-facebook-btn").addEventListener("click", () => {
+  recordShare("facebook");
+  handleShare(_platformUrls.facebook, "Image saved \u2014 post it on Facebook!");
+});
+$("#share-whatsapp-btn").addEventListener("click", () => {
+  recordShare("whatsapp");
+  handleShare(_platformUrls.whatsapp, "Image saved \u2014 attach it in the chat!");
+});
+$("#share-line-btn").addEventListener("click", () => {
+  recordShare("line");
+  handleShare(_platformUrls.line, "Image saved \u2014 attach it in the chat!");
+});
 
 /* ═══════════════════════════════════════════
    RESULT IMAGE DOWNLOAD (Canvas API)
@@ -1382,5 +1637,12 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 $("#download-btn").addEventListener("click", () => {
+  imageDownloaded = true;
+  trackEvent("result_image_downloaded", {
+    red_match:   lastRed   ? lastRed.name   : "",
+    white_match: lastWhite ? lastWhite.name : "",
+    language:    currentLang
+  });
+  sendIfChanged(false);
   generateResultImage();
 });
