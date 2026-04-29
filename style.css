@@ -1073,3 +1073,125 @@ body {
    Prevent 300ms tap delay & improve UX
    ═════════════════════════════════════════ */
 button, .option-btn, .share-icon-btn { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+
+/* ═════════════════════════════════════════
+   Language toggle (top-right, fixed)
+   ═════════════════════════════════════════ */
+.lang-toggle {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  right: 0;
+  margin: 12px 16px;
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(114, 47, 55, 0.15);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(44, 24, 16, 0.06);
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+
+.lang-btn {
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  font: inherit;
+  color: var(--text-light);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color .18s ease, background .18s ease;
+}
+
+.lang-btn:hover { color: var(--wine); }
+
+.lang-btn[aria-pressed="true"] {
+  color: var(--wine);
+  font-weight: 600;
+}
+
+.lang-sep {
+  color: rgba(114, 47, 55, 0.25);
+  user-select: none;
+}
+
+@media (max-width: 400px) {
+  .lang-toggle { margin: 8px 10px; padding: 3px 8px; font-size: 0.78rem; }
+  .lang-btn { padding: 3px 5px; }
+}
+
+/* ═════════════════════════════════════════
+   Chinese font swap (Traditional + Simplified)
+   When html[lang="zh-Hant"] / html[lang="zh-Hans"] is set, swap Inter /
+   Playfair Display for Noto Sans/Serif TC or SC so CJK glyphs render
+   with proper script-specific stroke style. Western fallbacks remain
+   so English mixed into the page (grape varietal names) still uses the
+   brand fonts.
+   ═════════════════════════════════════════ */
+html[lang="zh-Hant"] body {
+  font-family: 'Inter', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
+  letter-spacing: 0.01em;
+}
+html[lang="zh-Hans"] body {
+  font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  letter-spacing: 0.01em;
+}
+
+html[lang="zh-Hant"] .landing-title,
+html[lang="zh-Hant"] .results-title,
+html[lang="zh-Hant"] .pairing-section h3,
+html[lang="zh-Hant"] .fallfor-section h3,
+html[lang="zh-Hant"] .profile-section h3,
+html[lang="zh-Hant"] .orbit-section h3,
+html[lang="zh-Hant"] .grape-name,
+html[lang="zh-Hant"] .fallfor-name {
+  font-family: 'Playfair Display', 'Noto Serif TC', "PingFang TC", "Microsoft JhengHei", serif;
+  letter-spacing: 0.02em;
+}
+html[lang="zh-Hans"] .landing-title,
+html[lang="zh-Hans"] .results-title,
+html[lang="zh-Hans"] .pairing-section h3,
+html[lang="zh-Hans"] .fallfor-section h3,
+html[lang="zh-Hans"] .profile-section h3,
+html[lang="zh-Hans"] .orbit-section h3,
+html[lang="zh-Hans"] .grape-name,
+html[lang="zh-Hans"] .fallfor-name {
+  font-family: 'Playfair Display', 'Noto Serif SC', "PingFang SC", "Microsoft YaHei", serif;
+  letter-spacing: 0.02em;
+}
+
+/* The English landing-title <em>Grape</em> uses italic Playfair — but
+   Noto Serif TC/SC has no italic for the Chinese 葡萄 character. Drop
+   the italic and rely on the bold weight to keep the emphasis. */
+html[lang="zh-Hant"] .landing-title em,
+html[lang="zh-Hans"] .landing-title em {
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* CJK paragraph text reads better at slightly higher line-height for
+   character spacing and visual rhythm. Applies to both scripts. */
+html[lang="zh-Hant"] .grape-blurb,
+html[lang="zh-Hant"] .fallfor-blurb,
+html[lang="zh-Hant"] .pairing-section p,
+html[lang="zh-Hant"] .question-text,
+html[lang="zh-Hant"] .option-btn,
+html[lang="zh-Hant"] .landing-sub,
+html[lang="zh-Hant"] .profile-intro,
+html[lang="zh-Hant"] .orbit-intro,
+html[lang="zh-Hans"] .grape-blurb,
+html[lang="zh-Hans"] .fallfor-blurb,
+html[lang="zh-Hans"] .pairing-section p,
+html[lang="zh-Hans"] .question-text,
+html[lang="zh-Hans"] .option-btn,
+html[lang="zh-Hans"] .landing-sub,
+html[lang="zh-Hans"] .profile-intro,
+html[lang="zh-Hans"] .orbit-intro {
+  line-height: 1.75;
+}
+

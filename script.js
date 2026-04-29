@@ -488,6 +488,11 @@ const CONFIG = {
   // The shared token is not a secret-grade credential; it just blocks casual
   // drive-by writes. Anyone reading the source can find it.
   APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbzOB8H5_0VdV8CjgVLX7cGklMBRuDCwU_XwelLoUNG33NGp6Hh_46tQ-7mOLSGC5suA/exec",
+  // Optional Cloudflare Worker proxy used when the direct Apps Script call
+  // fails (mainland China blocks script.google.com). The Worker forwards to
+  // Apps Script server-side, so the row still lands in the same Sheet.
+  // Leave empty ("") to disable fallback; otherwise paste the workers.dev URL.
+  WORKER_URL: "https://grape-quiz-collector.weialbert0917.workers.dev/",
   SHARED_TOKEN: "gq_4tT9pX8nW2qRkLm6vYz3JhCdFsGbQ7eu",
   SCHEMA_VERSION: "2026-04-29",
   QUESTION_SET_VERSION: "v1",
@@ -611,35 +616,81 @@ function buildPayload(completed) {
     orbit_json:           lastOrbit   || [],
     profile_json:         profileObj,
     share_clicks_json:    shareClicks,
-    image_downloaded:     imageDownloaded
+    image_downloaded:     imageDownloaded,
+    // "direct" = browser → Apps Script. The Worker overrides this to
+    // "worker" before forwarding (see worker.js), so rows that came via
+    // the Cloudflare proxy are clearly distinguishable in the Sheet.
+    source:               "direct"
   };
   Object.assign(payload, getDeviceContext());
   return payload;
 }
 
+// Active endpoint for storage. Initialised from localStorage so a returning
+// mainland-China visitor goes directly through the Worker without paying the
+// cost of a failed Apps Script attempt on every visit.
+let _endpoint = (function () {
+  try {
+    const stored = localStorage.getItem("gq_endpoint");
+    if (stored === "worker" && CONFIG.WORKER_URL) return CONFIG.WORKER_URL;
+  } catch (_) {}
+  return CONFIG.APPS_SCRIPT_URL;
+})();
+
+function rememberEndpointPreference(url) {
+  try {
+    if (url === CONFIG.WORKER_URL)         localStorage.setItem("gq_endpoint", "worker");
+    else if (url === CONFIG.APPS_SCRIPT_URL) localStorage.removeItem("gq_endpoint");
+  } catch (_) {}
+}
+
 function sendPayload(payload, useBeacon) {
-  if (!CONFIG.APPS_SCRIPT_URL) return;
+  if (!_endpoint) return;
   let body;
   try { body = JSON.stringify(payload); } catch (_) { return; }
 
-  // Apps Script accepts text/plain bodies and parses contents as JSON.
-  // text/plain also avoids CORS preflight on no-cors fetch.
+  // sendBeacon (used on pagehide / hidden tab) cannot be retried — fire to
+  // whichever endpoint is currently cached. Subsequent visits inherit the
+  // working endpoint via localStorage, so even the abandonment beacon will
+  // reach the Worker for known-blocked clients on the second visit onward.
   if (useBeacon && "sendBeacon" in navigator) {
     try {
       const blob = new Blob([body], { type: "text/plain;charset=UTF-8" });
-      navigator.sendBeacon(CONFIG.APPS_SCRIPT_URL, blob);
+      navigator.sendBeacon(_endpoint, blob);
       return;
     } catch (_) { /* fall through to fetch */ }
   }
 
+  // Apps Script accepts text/plain bodies and parses contents as JSON.
+  // text/plain also avoids CORS preflight on no-cors fetch.
+  const primary  = _endpoint;
+  const fallback = (primary === CONFIG.APPS_SCRIPT_URL && CONFIG.WORKER_URL)
+    ? CONFIG.WORKER_URL : null;
+
   try {
-    fetch(CONFIG.APPS_SCRIPT_URL, {
+    fetch(primary, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
       body,
       mode: "no-cors",
       keepalive: true
-    }).catch(() => {});
+    }).catch(() => {
+      // Network-level failure (DNS poisoning / connection refused / blocked
+      // by GFW). Promote the Worker to the active endpoint for the rest of
+      // this session and any future visit, then retry this payload once.
+      if (!fallback) return;
+      _endpoint = fallback;
+      rememberEndpointPreference(_endpoint);
+      try {
+        fetch(_endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          body,
+          mode: "no-cors",
+          keepalive: true
+        }).catch(() => {});
+      } catch (_) {}
+    });
   } catch (_) {}
 }
 
@@ -693,6 +744,239 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* ═══════════════════════════════════════════
+   i18n RUNTIME
+   ───────────────────────────────────────────
+   The English source-of-truth lives in QUESTIONS / REDS / WHITES /
+   PAIRING_BANK / PAIRING_TAGS / CHEMISTRY_BANK / DIMS / GRAPE_TAGS
+   below. At boot we capture a snapshot of those originals so we can
+   restore them when the user switches back to English.
+   I18N (from i18n.js) provides the Traditional Chinese translations.
+   ═══════════════════════════════════════════ */
+
+const _en_snapshot = {
+  questions: null,
+  grapes:    null,
+  pairings:  null,
+  chemistry: null,
+  dims:      null
+};
+
+function uiStr(key) {
+  const dict = (window.I18N && I18N[currentLang] && I18N[currentLang].ui) || (window.I18N && I18N.en && I18N.en.ui) || {};
+  if (dict[key] !== undefined) return dict[key];
+  return (window.I18N && I18N.en && I18N.en.ui && I18N.en.ui[key]) || "";
+}
+
+function uiFmt(key, vars) {
+  let s = uiStr(key);
+  if (!vars) return s;
+  for (const k in vars) s = s.split("{" + k + "}").join(vars[k]);
+  return s;
+}
+
+function captureENOriginals() {
+  if (_en_snapshot.questions) return;
+
+  _en_snapshot.questions = QUESTIONS.map(q => ({
+    text: q.text,
+    opts: q.opts.slice()
+  }));
+
+  _en_snapshot.grapes = {};
+  REDS.concat(WHITES).forEach(g => {
+    _en_snapshot.grapes[g.name] = {
+      sig:     g.sig,
+      blurb:   g.blurb,
+      expr:    g.expr,
+      tannin:  g.tannin,
+      acidity: g.acidity,
+      tags:    GRAPE_TAGS[g.name] ? GRAPE_TAGS[g.name].slice() : []
+    };
+  });
+
+  _en_snapshot.pairings = {};
+  for (const k in PAIRING_BANK) {
+    _en_snapshot.pairings[k] = {
+      text: PAIRING_BANK[k],
+      tags: PAIRING_TAGS[k] ? PAIRING_TAGS[k].slice() : []
+    };
+  }
+
+  _en_snapshot.chemistry = {};
+  for (const name in CHEMISTRY_BANK) {
+    _en_snapshot.chemistry[name] = {
+      blurb: CHEMISTRY_BANK[name].blurb,
+      tags:  CHEMISTRY_BANK[name].tags.slice()
+    };
+  }
+
+  _en_snapshot.dims = DIMS.map(d => ({ left: d.left, right: d.right }));
+}
+
+function detectLang() {
+  try {
+    const stored = localStorage.getItem("gq_lang");
+    if (stored === "en" || stored === "zh-Hant" || stored === "zh-Hans") return stored;
+  } catch (_) {}
+  const nl = (navigator.language || "").toLowerCase();
+  // zh-TW / zh-HK / zh-MO / zh-Hant-* → Traditional Chinese
+  if (nl.startsWith("zh-hant") || nl === "zh-tw" || nl === "zh-hk" || nl === "zh-mo") {
+    return "zh-Hant";
+  }
+  // zh-CN / zh-SG / zh-MY / zh-Hans-* → Simplified Chinese
+  if (nl.startsWith("zh-hans") || nl === "zh-cn" || nl === "zh-sg" || nl === "zh-my") {
+    return "zh-Hans";
+  }
+  // Bare "zh" with no script/region: default to Simplified (larger audience).
+  // Users always have the toggle to switch.
+  if (nl === "zh") return "zh-Hans";
+  return "en";
+}
+
+function applyUIStrings() {
+  const dict = (window.I18N && I18N[currentLang] && I18N[currentLang].ui) ||
+               (window.I18N && I18N.en && I18N.en.ui) || {};
+  if (dict.pageTitle) document.title = dict.pageTitle;
+
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.dataset.i18n;
+    if (dict[key] !== undefined) el.textContent = dict[key];
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => {
+    const key = el.dataset.i18nHtml;
+    if (dict[key] !== undefined) el.innerHTML = dict[key];
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach(el => {
+    const key = el.dataset.i18nTitle;
+    if (dict[key] !== undefined) el.setAttribute("title", dict[key]);
+  });
+  document.querySelectorAll("[data-i18n-alt]").forEach(el => {
+    const key = el.dataset.i18nAlt;
+    if (dict[key] !== undefined) el.setAttribute("alt", dict[key]);
+  });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach(el => {
+    const key = el.dataset.i18nAriaLabel;
+    if (dict[key] !== undefined) el.setAttribute("aria-label", dict[key]);
+  });
+}
+
+function applyLang(lang) {
+  if (!_en_snapshot.questions) captureENOriginals();
+  if (lang !== "en" && !(window.I18N && I18N[lang])) lang = "en";
+
+  const wasLang = currentLang;
+  currentLang = lang;
+  document.documentElement.setAttribute("lang", lang);
+
+  const T = (lang !== "en" && window.I18N && I18N[lang]) ? I18N[lang] : null;
+
+  // Questions
+  const tQ = T ? T.questions : _en_snapshot.questions;
+  QUESTIONS.forEach((q, i) => {
+    if (tQ && tQ[i]) {
+      q.text = tQ[i].text;
+      q.opts = tQ[i].opts.slice();
+    }
+  });
+
+  // Grapes — sig / blurb / expr / tags / tannin / acidity
+  REDS.concat(WHITES).forEach(g => {
+    const en = _en_snapshot.grapes[g.name];
+    if (!T) {
+      if (en) {
+        g.sig = en.sig;
+        g.blurb = en.blurb;
+        g.expr = en.expr;
+        if (en.tannin  !== undefined) g.tannin  = en.tannin;
+        if (en.acidity !== undefined) g.acidity = en.acidity;
+        GRAPE_TAGS[g.name] = en.tags.slice();
+      }
+    } else {
+      const tg = T.grapes && T.grapes[g.name];
+      if (tg) {
+        g.sig   = tg.sig   || (en ? en.sig   : g.sig);
+        g.blurb = tg.blurb || (en ? en.blurb : g.blurb);
+        g.expr  = tg.expr  || (en ? en.expr  : g.expr);
+        if (tg.tags) GRAPE_TAGS[g.name] = tg.tags.slice();
+      }
+      if (en && en.tannin && T.tannins && T.tannins[en.tannin]) {
+        g.tannin = T.tannins[en.tannin];
+      }
+      if (en && en.acidity && T.acidities && T.acidities[en.acidity]) {
+        g.acidity = T.acidities[en.acidity];
+      }
+    }
+  });
+
+  // Pairings
+  Object.keys(PAIRING_BANK).forEach(k => {
+    if (!T) {
+      const e = _en_snapshot.pairings[k];
+      if (e) { PAIRING_BANK[k] = e.text; PAIRING_TAGS[k] = e.tags.slice(); }
+    } else {
+      const tp = T.pairings && T.pairings[k];
+      if (tp) { PAIRING_BANK[k] = tp.text; PAIRING_TAGS[k] = tp.tags.slice(); }
+    }
+  });
+
+  // Chemistry
+  Object.keys(CHEMISTRY_BANK).forEach(name => {
+    if (!T) {
+      const e = _en_snapshot.chemistry[name];
+      if (e) CHEMISTRY_BANK[name] = { blurb: e.blurb, tags: e.tags.slice() };
+    } else {
+      const tc = T.chemistry && T.chemistry[name];
+      if (tc) CHEMISTRY_BANK[name] = { blurb: tc.blurb, tags: tc.tags.slice() };
+    }
+  });
+
+  // Dim labels
+  DIMS.forEach((d, i) => {
+    if (!T) {
+      const e = _en_snapshot.dims[i];
+      if (e) { d.left = e.left; d.right = e.right; }
+    } else if (T.dims && T.dims[i]) {
+      d.left  = T.dims[i].left;
+      d.right = T.dims[i].right;
+    }
+  });
+
+  // UI strings
+  applyUIStrings();
+
+  // Toggle aria-pressed on language buttons
+  document.querySelectorAll(".lang-btn").forEach(b => {
+    b.setAttribute("aria-pressed", b.dataset.lang === lang ? "true" : "false");
+  });
+
+  // Re-render currently visible dynamic content
+  if (typeof quiz !== "undefined" && quiz && quiz.classList.contains("active")) {
+    renderQuestion();
+  }
+  if (typeof results !== "undefined" && results && results.classList.contains("active") && lastRed) {
+    refreshResultsUI();
+  }
+
+  // Track language change
+  if (wasLang && wasLang !== lang) {
+    languageChanges++;
+    trackEvent("language_changed", { from: wasLang, to: lang });
+    sendIfChanged(false);
+  }
+
+  try { localStorage.setItem("gq_lang", lang); } catch (_) {}
+}
+
+function setupLangToggle() {
+  document.querySelectorAll(".lang-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const lang = btn.dataset.lang;
+      if (lang && lang !== currentLang) applyLang(lang);
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════
    DOM
    ═══════════════════════════════════════════ */
 const $  = (s) => document.querySelector(s);
@@ -717,7 +1001,7 @@ function renderQuestion() {
   void area.offsetHeight;
   area.style.animation = "fadeSlideIn .35s ease";
 
-  $("#question-number").textContent = `Question ${currentQ + 1}`;
+  $("#question-number").textContent = uiFmt("questionLabelFmt", { n: currentQ + 1 });
   $("#question-text").textContent = q.text;
 
   const optBox = $("#options");
@@ -750,11 +1034,7 @@ function selectOption(idx) {
 
 function updateNextBtn() {
   const btn = $("#next-btn");
-  if (currentQ === 14) {
-    btn.textContent = "See My Results";
-  } else {
-    btn.textContent = "Next";
-  }
+  btn.textContent = (currentQ === 14) ? uiStr("finalBtn") : uiStr("nextBtn");
   btn.disabled = answers[currentQ] === null;
 }
 
@@ -1039,23 +1319,23 @@ function computeAndShowResults() {
 
   $("#red-name").textContent = red.name;
   $("#red-sig").textContent = red.sig;
-  $("#red-tannin").textContent = `Tannin: ${red.tannin}`;
+  $("#red-tannin").textContent = uiStr("tanninPrefix") + red.tannin;
   $("#red-blurb").textContent = red.blurb;
-  $("#red-expressions").textContent = `Classic expressions: ${red.expr}`;
+  $("#red-expressions").textContent = uiStr("classicExpressions") + red.expr;
   $("#red-wiki").href = wikiUrl(red.name);
   renderTags(red.name, "#red-tags");
 
   $("#white-name").textContent = white.name;
   $("#white-sig").textContent = white.sig;
-  $("#white-acidity").textContent = `Acidity: ${white.acidity}`;
+  $("#white-acidity").textContent = uiStr("acidityPrefix") + white.acidity;
   $("#white-blurb").textContent = white.blurb;
-  $("#white-expressions").textContent = `Classic expressions: ${white.expr}`;
+  $("#white-expressions").textContent = uiStr("classicExpressions") + white.expr;
   $("#white-wiki").href = wikiUrl(white.name);
   renderTags(white.name, "#white-tags");
 
   const pairingKey = `${red.family}+${white.family}`;
   $("#pairing-text").textContent = PAIRING_BANK[pairingKey] || "";
-  $("#pairing-note").textContent = `This is a pairing of ${red.sig} and ${white.sig}.`;
+  $("#pairing-note").textContent = uiFmt("pairingNoteFmt", { sigRed: red.sig, sigWhite: white.sig });
   renderPairingTags(pairingKey);
 
   resetImageWrap("#red-image-wrap");
@@ -1215,10 +1495,19 @@ function renderProfile(profile) {
     const leftClass = isLeft ? "profile-label-left active-label" : "profile-label-left";
     const rightClass = (!isLeft && !isBalanced) ? "profile-label-right active-label" : "profile-label-right";
 
+    // Chinese: "偏向外向" (no space). English: "Leaning Social" (with space).
+    const sep = currentLang.indexOf("zh") === 0 ? "" : " ";
     let leaning;
-    if (isBalanced) { leaning = "Balanced"; summaryParts.push("Balanced"); }
-    else if (isLeft) { leaning = `Leaning ${d.left}`; summaryParts.push(d.left); }
-    else { leaning = `Leaning ${d.right}`; summaryParts.push(d.right); }
+    if (isBalanced) {
+      leaning = uiStr("profileBalanced");
+      summaryParts.push(uiStr("profileBalanced"));
+    } else if (isLeft) {
+      leaning = uiStr("profileLeaning") + sep + d.left;
+      summaryParts.push(d.left);
+    } else {
+      leaning = uiStr("profileLeaning") + sep + d.right;
+      summaryParts.push(d.right);
+    }
 
     row.innerHTML = `
       <span class="profile-label ${leftClass}">${d.left}</span>
@@ -1232,7 +1521,7 @@ function renderProfile(profile) {
     box.appendChild(row);
   });
 
-  $("#profile-summary").textContent = summaryParts.join(" \u00B7 ");
+  $("#profile-summary").textContent = summaryParts.join(uiStr("profileSep"));
 }
 
 /* ═══════════════════════════════════════════
@@ -1240,9 +1529,12 @@ function renderProfile(profile) {
    ═══════════════════════════════════════════ */
 
 function getShareText(red, white, fallFor) {
-  let text = `I took the Grape Personality Quiz!\n\nRed match: ${red.name}\nWhite match: ${white.name}`;
-  if (fallFor) text += `\nGrape I'd fall for: ${fallFor.name}`;
-  text += `\n\nTry it: ${window.location.href}`;
+  const sep = ": ";
+  let text = uiStr("shareTextHeader") + "\n\n" +
+             uiStr("shareTextRed")   + sep + red.name + "\n" +
+             uiStr("shareTextWhite") + sep + white.name;
+  if (fallFor) text += "\n" + uiStr("shareTextFall") + sep + fallFor.name;
+  text += "\n\n" + uiStr("shareTextTry") + sep + window.location.href;
   return text;
 }
 
@@ -1337,31 +1629,31 @@ $("#share-copy-btn").addEventListener("click", () => {
     lastFallFor
   );
   navigator.clipboard.writeText(text).then(() => {
-    showConfirm("Copied to clipboard!");
+    showConfirm(uiStr("shareCopied"));
   }).catch(() => {
-    showConfirm("Could not copy \u2014 try manually.");
+    showConfirm(uiStr("shareCopyFailed"));
   });
 });
 
 $("#share-instagram-btn").addEventListener("click", () => {
   recordShare("instagram");
-  handleShare(null, "Image saved! Open Instagram and share from your gallery.");
+  handleShare(null, uiStr("shareInstagramToast"));
 });
 $("#share-x-btn").addEventListener("click", () => {
   recordShare("x");
-  handleShare(_platformUrls.x, "Image saved \u2014 attach it to your post on X!");
+  handleShare(_platformUrls.x, uiStr("shareXToast"));
 });
 $("#share-facebook-btn").addEventListener("click", () => {
   recordShare("facebook");
-  handleShare(_platformUrls.facebook, "Image saved \u2014 post it on Facebook!");
+  handleShare(_platformUrls.facebook, uiStr("shareFacebookToast"));
 });
 $("#share-whatsapp-btn").addEventListener("click", () => {
   recordShare("whatsapp");
-  handleShare(_platformUrls.whatsapp, "Image saved \u2014 attach it in the chat!");
+  handleShare(_platformUrls.whatsapp, uiStr("shareWhatsappToast"));
 });
 $("#share-line-btn").addEventListener("click", () => {
   recordShare("line");
-  handleShare(_platformUrls.line, "Image saved \u2014 attach it in the chat!");
+  handleShare(_platformUrls.line, uiStr("shareLineToast"));
 });
 
 /* ═══════════════════════════════════════════
@@ -1646,3 +1938,52 @@ $("#download-btn").addEventListener("click", () => {
   sendIfChanged(false);
   generateResultImage();
 });
+
+/* ═══════════════════════════════════════════
+   i18n BOOTSTRAP
+   Runs once at the end of the script after all data structures and
+   render functions are defined. Captures the English source-of-truth
+   snapshot, applies the user's preferred language, and wires the
+   top-right language toggle.
+   ═══════════════════════════════════════════ */
+
+function refreshResultsUI() {
+  if (!lastRed || !lastWhite) return;
+  const red = lastRed, white = lastWhite, fallFor = lastFallFor;
+
+  $("#red-name").textContent = red.name;
+  $("#red-sig").textContent  = red.sig;
+  $("#red-tannin").textContent = uiStr("tanninPrefix") + red.tannin;
+  $("#red-blurb").textContent  = red.blurb;
+  $("#red-expressions").textContent = uiStr("classicExpressions") + red.expr;
+  renderTags(red.name, "#red-tags");
+
+  $("#white-name").textContent = white.name;
+  $("#white-sig").textContent  = white.sig;
+  $("#white-acidity").textContent = uiStr("acidityPrefix") + white.acidity;
+  $("#white-blurb").textContent   = white.blurb;
+  $("#white-expressions").textContent = uiStr("classicExpressions") + white.expr;
+  renderTags(white.name, "#white-tags");
+
+  const pairingKey = `${red.family}+${white.family}`;
+  $("#pairing-text").textContent = PAIRING_BANK[pairingKey] || "";
+  $("#pairing-note").textContent = uiFmt("pairingNoteFmt", { sigRed: red.sig, sigWhite: white.sig });
+  renderPairingTags(pairingKey);
+
+  if (fallFor) renderFallFor(fallFor);
+  if (lastProfile) renderProfile(lastProfile);
+
+  if (lastOrbit && lastOrbit.length) {
+    const all = REDS.concat(WHITES);
+    const orbitGrapes = lastOrbit
+      .map(n => all.find(g => g.name === n))
+      .filter(Boolean);
+    renderOrbit(orbitGrapes);
+  }
+
+  setupShareLinks(red, white, fallFor);
+}
+
+captureENOriginals();
+setupLangToggle();
+applyLang(detectLang());
